@@ -9,6 +9,7 @@
 
 #include "../../../include/secp256k1_schnorrsig.h"
 #include "../../unit_test.h"
+#include "tests_anti_exfil_impl.h"
 
 /* Checks that a bit flip in the n_flip-th argument (that has n_bytes many
  * bytes) changes the hash function
@@ -996,6 +997,10 @@ REPEAT_TEST(test_schnorrsig_sign_verify)
 static const struct tf_test_entry tests_schnorrsig[] = {
     CASE(nonce_function_bip340_tests),
     CASE1(test_schnorrsig_api),
+    CASE1(test_schnorrsig_anti_exfil_vectors),
+    CASE1(test_schnorrsig_anti_exfil_api),
+    CASE1(test_schnorrsig_anti_exfil_failures),
+    CASE1(test_schnorrsig_anti_exfil_randomized),
     CASE1(test_schnorrsig_sha256_tagged),
     CASE1(test_schnorrsig_bip_vectors),
     CASE1(test_schnorrsig_sign),

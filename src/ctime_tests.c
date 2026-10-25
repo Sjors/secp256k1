@@ -30,6 +30,7 @@
 
 #ifdef ENABLE_MODULE_SCHNORRSIG
 #include "../include/secp256k1_schnorrsig.h"
+#include "../include/secp256k1_anti_exfil.h"
 #endif
 
 #ifdef ENABLE_MODULE_MUSIG
@@ -233,6 +234,23 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
     ret = secp256k1_schnorrsig_sign_custom(ctx, sig, msg, 32, &keypair, NULL);
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
     CHECK(ret == 1);
+
+    /* Secret-key-dependent anti-exfil commitment and signing operations. */
+    {
+        unsigned char host_nonce[32] = { 0 };
+        unsigned char host_commitment[32];
+        secp256k1_pubkey signer_nonce;
+        host_nonce[31] = 1;
+        CHECK(secp256k1_schnorrsig_anti_exfil_host_commit(ctx, host_commitment, host_nonce));
+        SECP256K1_CHECKMEM_UNDEFINE(&keypair, sizeof(keypair));
+        ret = secp256k1_schnorrsig_anti_exfil_signer_commit(ctx, &signer_nonce, msg, &keypair, host_commitment);
+        SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
+        CHECK(ret == 1);
+        SECP256K1_CHECKMEM_UNDEFINE(&keypair, sizeof(keypair));
+        ret = secp256k1_schnorrsig_anti_exfil_sign(ctx, sig, msg, &keypair, host_nonce);
+        SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
+        CHECK(ret == 1);
+    }
 
     extraparams.noncefp = NULL;
     extraparams.ndata = aux_rand;

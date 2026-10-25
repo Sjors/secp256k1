@@ -8,6 +8,7 @@
 #define SECP256K1_MODULE_SCHNORRSIG_TESTS_EXHAUSTIVE_H
 
 #include "../../../include/secp256k1_schnorrsig.h"
+#include "../../../include/secp256k1_anti_exfil.h"
 #include "main_impl.h"
 
 static const unsigned char invalid_pubkey_bytes[][32] = {
@@ -183,6 +184,56 @@ static void test_exhaustive_schnorrsig_sign(const secp256k1_context *ctx, unsign
     }
 }
 
+/* Small-order groups make the two otherwise negligible nonce failures
+ * observable without adding a production nonce-injection interface. */
+static void test_exhaustive_schnorrsig_anti_exfil(const secp256k1_context *ctx, const secp256k1_keypair *keypairs, const secp256k1_xonly_pubkey *pubkeys) {
+    unsigned int d, rho, message;
+    unsigned int zero_original = 0, zero_combined = 0;
+    unsigned char zero_nonce[sizeof(secp256k1_pubkey)] = { 0 };
+    unsigned char zero_sig[64] = { 0 };
+    for (d = 1; d < EXHAUSTIVE_TEST_ORDER; ++d) {
+        for (rho = 1; rho < EXHAUSTIVE_TEST_ORDER; ++rho) {
+            for (message = 0; message < 16; ++message) {
+                unsigned char rho32[32] = { 0 }, msg32[32] = { 0 };
+                unsigned char commitment[32], sig64[64];
+                secp256k1_pubkey nonce, combined;
+                int committed, signed_ok, finite;
+                secp256k1_write_be32(rho32 + 28, rho);
+                msg32[0] = message;
+                CHECK(secp256k1_schnorrsig_anti_exfil_host_commit(ctx, commitment, rho32));
+                memset(&nonce, 0xA5, sizeof(nonce));
+                memset(sig64, 0xA5, sizeof(sig64));
+                committed = secp256k1_schnorrsig_anti_exfil_signer_commit(ctx, &nonce, msg32, &keypairs[d - 1], commitment);
+                signed_ok = secp256k1_schnorrsig_anti_exfil_sign(ctx, sig64, msg32, &keypairs[d - 1], rho32);
+                if (!committed) {
+                    /* A valid key and fixed nonce function can fail here only
+                     * when the original scalar is zero. Neither API may return
+                     * usable output, even if adding rho would make it nonzero. */
+                    ++zero_original;
+                    CHECK(!signed_ok);
+                    CHECK(secp256k1_memcmp_var(&nonce, zero_nonce, sizeof(nonce)) == 0);
+                    CHECK(secp256k1_memcmp_var(sig64, zero_sig, sizeof(sig64)) == 0);
+                    continue;
+                }
+                combined = nonce;
+                finite = secp256k1_ec_pubkey_tweak_add(ctx, &combined, rho32);
+                CHECK(signed_ok == finite);
+                if (!finite) {
+                    /* The independently computed point sum is infinity, so
+                     * the signer must reject the zero final nonce and clear its signature. */
+                    ++zero_combined;
+                    CHECK(secp256k1_memcmp_var(sig64, zero_sig, sizeof(sig64)) == 0);
+                    CHECK(!secp256k1_schnorrsig_anti_exfil_host_verify(ctx, sig64, msg32, &pubkeys[d - 1], rho32, &nonce));
+                } else {
+                    CHECK(secp256k1_schnorrsig_anti_exfil_host_verify(ctx, sig64, msg32, &pubkeys[d - 1], rho32, &nonce));
+                }
+            }
+        }
+    }
+    CHECK(zero_original > 0);
+    CHECK(zero_combined > 0);
+}
+
 static void test_exhaustive_schnorrsig(const secp256k1_context *ctx) {
     secp256k1_keypair keypair[EXHAUSTIVE_TEST_ORDER - 1];
     secp256k1_xonly_pubkey xonly_pubkey[EXHAUSTIVE_TEST_ORDER - 1];
@@ -207,6 +258,7 @@ static void test_exhaustive_schnorrsig(const secp256k1_context *ctx) {
         CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly_pubkey_bytes[i - 1], &xonly_pubkey[i - 1]));
     }
 
+    test_exhaustive_schnorrsig_anti_exfil(ctx, keypair, xonly_pubkey);
     test_exhaustive_schnorrsig_sign(ctx, xonly_pubkey_bytes, keypair, parity);
     test_exhaustive_schnorrsig_verify(ctx, xonly_pubkey, xonly_pubkey_bytes, parity);
 }
